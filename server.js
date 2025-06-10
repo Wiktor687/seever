@@ -3,11 +3,13 @@ const multer = require('multer');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const morgan = require('morgan');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(morgan('dev'));
 
 // Upewnij się, że folder 'uploads' istnieje
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -65,6 +67,20 @@ app.post('/api/books', upload.single('photo'), (req, res) => {
 // Endpoint GET - zwracanie ofert
 app.get('/api/books', (req, res) => {
   res.json(offers);
+});
+
+// Endpoint: zwracanie szczegółów żądania HTTP jako JSON
+app.get('/request-info', (req, res) => {
+  res.json({
+    method: req.method,
+    url: req.originalUrl,
+    headers: req.headers,
+    ip: req.ip,
+    protocol: req.protocol,
+    hostname: req.hostname,
+    query: req.query,
+    body: req.body
+  });
 });
 
 // Uruchom serwer na wszystkich interfejsach
