@@ -42,6 +42,7 @@ app.post('/api/books', upload.single('photo'), (req, res) => {
   }
 
   const newOffer = {
+    id: Date.now().toString(), // unikalny identyfikator
     subject,
     title,
     publisher,
@@ -65,6 +66,22 @@ app.post('/api/books', upload.single('photo'), (req, res) => {
 // Endpoint GET - zwracanie ofert
 app.get('/api/books', (req, res) => {
   res.json(offers);
+});
+
+// Usuń ofertę po id
+app.delete('/api/books/:id', (req, res) => {
+  const { id } = req.params;
+  const index = offers.findIndex(o => o.id === id);
+  if (index === -1) {
+    return res.status(404).json({ error: 'Nie znaleziono oferty' });
+  }
+  // Usuń plik zdjęcia jeśli istnieje
+  const photoPath = offers[index].photo?.replace(`${req.protocol}://${req.get('host')}`, '.');
+  if (photoPath && fs.existsSync(photoPath)) {
+    fs.unlinkSync(photoPath);
+  }
+  offers.splice(index, 1);
+  res.sendStatus(204);
 });
 
 // Uruchom serwer na wszystkich interfejsach
