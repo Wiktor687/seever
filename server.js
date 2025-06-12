@@ -3,11 +3,15 @@ const multer = require('multer');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const sanitizeHtml = require('sanitize-html');
+const bodyParser = require('body-parser');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 
 // Upewnij się, że folder 'uploads' istnieje
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -82,6 +86,26 @@ app.delete('/api/books/:id', (req, res) => {
   }
   offers.splice(index, 1);
   res.sendStatus(204);
+});
+
+// Dodawanie oferty
+app.post('/api/books', (req, res) => {
+    const { title, deleteCode } = req.body;
+    if (!deleteCode || deleteCode.length < 4) return res.status(400).json({ message: 'Brak kodu do usuwania' });
+    const id = Date.now().toString();
+    books.push({ id, title, deleteCode });
+    res.json({ id });
+});
+
+// Usuwanie oferty
+app.delete('/api/books/:id', (req, res) => {
+    const { id } = req.params;
+    const { deleteCode } = req.body;
+    const idx = books.findIndex(b => b.id === id);
+    if (idx === -1) return res.status(404).json({ message: 'Nie znaleziono oferty' });
+    if (books[idx].deleteCode !== deleteCode) return res.status(403).json({ message: 'Nieprawidłowy kod' });
+    books.splice(idx, 1);
+    res.json({ message: 'Oferta usunięta' });
 });
 
 // Uruchom serwer na wszystkich interfejsach
