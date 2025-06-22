@@ -8,6 +8,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 const multer = require('multer');
 const cors = require('cors');
 const fs = require('fs');
+const morgan = require('morgan');
 const bodyParser = require('body-parser');
 const sanitizeHtml = require('sanitize-html');
 const bcrypt = require('bcryptjs');
@@ -106,6 +107,7 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(morgan('dev'));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
@@ -344,6 +346,20 @@ app.delete('/api/books', isAdmin, (req, res) => {
   db.run('DELETE FROM books', function(err) {
     if (err) return res.status(500).json({ message: 'Błąd usuwania ofert' });
     res.json({ message: 'Wszystkie oferty zostały usunięte' });
+  });
+});
+
+// Endpoint: zwracanie szczegółów żądania HTTP jako JSON
+app.get('/request-info', (req, res) => {
+  res.json({
+    method: req.method,
+    url: req.originalUrl,
+    headers: req.headers,
+    ip: req.ip,
+    protocol: req.protocol,
+    hostname: req.hostname,
+    query: req.query,
+    body: req.body
   });
 });
 
