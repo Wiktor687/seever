@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Instaluj tylko produkcyjne zależności
-RUN npm install --production && npm cache clean --force \
+RUN npm install --production && npm cache clean --force && \
     find node_modules -type d -name "test" -o -name "__tests__" | xargs rm -rf && \
     find node_modules -type f -name "*.md" -o -name "*.ts" | xargs rm -f
 
