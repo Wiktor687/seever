@@ -15,8 +15,62 @@ const bcrypt = require('bcryptjs');
 const sqlite3 = require('sqlite3').verbose();
 const nodemailer = require('nodemailer');
 const jwt = require('jsonwebtoken');
-const db = new sqlite3.Database('data/users.db'); // <-- tylko raz!
+const db = new sqlite3.Database('./users.db'); // <-- tylko raz!
 
+/*
+=== STRUKTURA BAZY DANYCH ===
+
+1. TABELA users:
+   - id (INTEGER, PRIMARY KEY, AUTOINCREMENT)
+   - firstName, lastName, userClass, phone, messenger, instagram (TEXT)
+   - mail (TEXT, UNIQUE)
+   - password (TEXT) - zahashowane bcrypt
+   - role (TEXT, DEFAULT 'user') - role: 'user', 'admin', 'przewodniczący'
+   - blockedUntil (TEXT) - data końca blokady w formacie ISO
+   - blockReason (TEXT) - powód blokady
+
+2. TABELA books:
+   - id (INTEGER, PRIMARY KEY, AUTOINCREMENT)
+   - subject, title, publisher, year, grade, price, stan (TEXT)
+   - photo (TEXT) - URL do zdjęcia
+   - date (TEXT) - data dodania w formacie ISO
+   - userMail, userFirstName, userLastName, userClass, userPhone, userMessenger, userInstagram (TEXT)
+
+3. TABELA spotet:
+   - id (INTEGER, PRIMARY KEY, AUTOINCREMENT)
+   - text (TEXT) - treść wiadomości
+   - photo (TEXT) - opcjonalne zdjęcie
+   - date (TEXT) - data w formacie ISO
+   - authorMail (TEXT) - mail autora
+
+4. TABELA spotet_comments:
+   - id (INTEGER, PRIMARY KEY, AUTOINCREMENT)
+   - spotetId (INTEGER) - ID wiadomości spotet
+   - text (TEXT) - treść komentarza
+   - date (TEXT) - data w formacie ISO
+   - authorMail (TEXT) - mail autora
+   - isAnonymous (INTEGER, DEFAULT 0) - czy komentarz anonimowy
+
+5. TABELA ogloszenia:
+   - id (INTEGER, PRIMARY KEY, AUTOINCREMENT)
+   - title (TEXT) - tytuł ogłoszenia
+   - text (TEXT) - treść ogłoszenia
+   - photo (TEXT) - opcjonalne zdjęcie
+   - date (TEXT) - data w formacie ISO
+   - authorMail (TEXT) - mail autora
+   - authorRole (TEXT) - rola autora
+   - pending (INTEGER, DEFAULT 0) - czy czeka na akceptację
+
+6. TABELA ogloszenia_comments:
+   - id (INTEGER, PRIMARY KEY, AUTOINCREMENT)
+   - ogloszenieId (INTEGER) - ID ogłoszenia
+   - text (TEXT) - treść komentarza
+   - date (TEXT) - data w formacie ISO
+   - authorMail (TEXT) - mail autora
+   - isAnonymous (INTEGER, DEFAULT 0) - czy komentarz anonimowy
+*/
+
+// Tworzenie wszystkich tabel z pełnymi kolumnami
 db.run(`CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   firstName TEXT,
@@ -26,7 +80,10 @@ db.run(`CREATE TABLE IF NOT EXISTS users (
   messenger TEXT,
   instagram TEXT,
   mail TEXT UNIQUE,
-  password TEXT
+  password TEXT,
+  role TEXT DEFAULT 'user',
+  blockedUntil TEXT,
+  blockReason TEXT
 )`);
 db.run(`CREATE TABLE IF NOT EXISTS books (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,10 +148,6 @@ async function addUsers() {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ['Admin', 'Systemu', 'admin', '', '', '', 'admin@lo2.przemysl.edu.pl', hash, 'admin']
   );
-
-
-
-
 }
 
  addUsers(); 
@@ -196,20 +249,34 @@ app.put('/api/books/:id', (req, res) => {
 // Usuń ofertę (admin/przewodniczący dowolną, user tylko swoją)
 app.delete('/api/books/:id', (req, res) => {
   const { id } = req.params;
-  // Pobierz mail i rolę z nagłówków lub body
-  const userMail = req.headers['x-user-mail'] || req.body?.mail;
-  const userRole = (req.headers['x-user-role'] || req.body?.role || '').toLowerCase();
+  
+  // Sprawdź uprawnienia - pobierz dane użytkownika z tokena
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ message: 'Brak autoryzacji.' });
+  }
+  
+  const token = authHeader.split(' ')[1];
+  let currentUser = null;
+  
+  try {
+    const decoded = jwt.verify(token, SECRET);
+    currentUser = decoded;
+  } catch (err) {
+    return res.status(401).json({ message: 'Nieprawidłowy token.' });
+  }
 
   db.get('SELECT * FROM books WHERE id = ?', [id], (err, book) => {
-    if (err || !book) return res.status(404).json({ message: 'Nie znaleziono oferty' });
+    if (err) return res.status(500).json({ message: 'Błąd serwera przy sprawdzaniu oferty.' });
+    if (!book) return res.status(404).json({ message: 'Nie znaleziono oferty' });
 
     // Pozwól adminowi/przewodniczącemu lub właścicielowi
     if (
-      userMail === book.userMail ||
-      userMail === 'admin@lo2.przemysl.edu.pl' ||
-      userRole === 'admin' ||
-      userRole === 'przewodniczący' ||
-      userRole === 'przewodniczacy'
+      currentUser.mail === book.userMail ||
+      currentUser.mail === 'admin@lo2.przemysl.edu.pl' ||
+      currentUser.role === 'admin' ||
+      currentUser.role === 'przewodniczący' ||
+      currentUser.role === 'przewodniczacy'
     ) {
       db.run('DELETE FROM books WHERE id = ?', [id], function (err2) {
         if (err2) return res.status(500).json({ message: 'Błąd serwera przy usuwaniu oferty' });
@@ -220,43 +287,6 @@ app.delete('/api/books/:id', (req, res) => {
     }
   });
 });
-
-// Połączenie z bazą SQLite
-
-
-// Tworzenie tabeli users (już masz)
-db.run(`CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  firstName TEXT,
-  lastName TEXT,
-  userClass TEXT,
-  phone TEXT,
-  messenger TEXT,
-  instagram TEXT,
-  mail TEXT UNIQUE,
-  password TEXT
-)`);
-
-// Tworzenie tabeli books (NOWE)
-db.run(`CREATE TABLE IF NOT EXISTS books (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  subject TEXT,
-  title TEXT,
-  publisher TEXT,
-  year TEXT,
-  grade TEXT,
-  price TEXT,
-  stan TEXT,
-  photo TEXT,
-  date TEXT,
-  userMail TEXT,
-  userFirstName TEXT,
-  userLastName TEXT,
-  userClass TEXT,
-  userPhone TEXT,
-  userMessenger TEXT,
-  userInstagram TEXT
-)`);
 
 // REJESTRACJA
 app.post('/api/register', async (req, res) => {
@@ -377,11 +407,20 @@ app.get('/api/users', (req, res) => {
   });
 });
 
-app.get('/api/users/:mail', (req, res) => {
+app.get('/api/users/:mail', authAndBlockCheck, (req, res) => {
   db.get('SELECT * FROM users WHERE mail = ?', [req.params.mail], (err, row) => {
     if (err) return res.status(500).json({ message: 'Błąd bazy danych' });
     if (!row) return res.status(404).json({ message: 'Nie znaleziono użytkownika' });
-    res.json(row);
+    
+    // Sprawdź czy użytkownik ma uprawnienia - może przeglądać tylko swoje dane lub admin może wszystkie
+    const requestingUser = req.user; // z middleware authAndBlockCheck
+    if (requestingUser.mail !== req.params.mail && requestingUser.role !== 'admin') {
+      return res.status(403).json({ message: 'Brak uprawnień do przeglądania danych tego użytkownika' });
+    }
+    
+    // Usuń hasło z odpowiedzi
+    const { password, ...userData } = row;
+    res.json(userData);
   });
 });
 
@@ -412,6 +451,22 @@ app.post('/api/spotet', authAndBlockCheck, spotetUpload.single('photo'), (req, r
 
 // Pobierz wszystkie anonimowe wiadomości
 app.get('/api/spotet', (req, res) => {
+  // Sprawdź czy user jest zalogowany i czy jest adminem
+  const authHeader = req.headers.authorization;
+  let isUserAdmin = false;
+  let currentUserMail = null;
+  
+  if (authHeader) {
+    try {
+      const token = authHeader.split(' ')[1];
+      const decoded = jwt.verify(token, SECRET);
+      currentUserMail = decoded.mail;
+      isUserAdmin = decoded.role === 'admin';
+    } catch (err) {
+      // Token nieprawidłowy, kontynuuj jako niezalogowany
+    }
+  }
+  
   db.all(`
     SELECT spotet.id, spotet.text, spotet.photo, spotet.date, spotet.authorMail, users.role as authorRole
     FROM spotet
@@ -419,7 +474,16 @@ app.get('/api/spotet', (req, res) => {
     ORDER BY date DESC
   `, [], (err, rows) => {
     if (err) return res.status(500).json({ message: 'Błąd serwera przy pobieraniu wiadomości.' });
-    res.json(rows);
+    
+    // Filtruj dane w zależności od uprawnień użytkownika
+    const filteredRows = rows.map(row => ({
+      ...row,
+      authorMail: isUserAdmin ? row.authorMail : null, // Tylko admin widzi emaile
+      isCurrentUserAdmin: isUserAdmin,
+      currentUserMail: currentUserMail
+    }));
+    
+    res.json(filteredRows);
   });
 });
 
@@ -456,9 +520,38 @@ app.post('/api/spotet/:id/comment', (req, res) => {
 // Pobierz komentarze do wiadomości
 app.get('/api/spotet/:id/comments', (req, res) => {
   const { id } = req.params;
+  
+  // Sprawdź czy user jest zalogowany i czy jest adminem
+  const authHeader = req.headers.authorization;
+  let isUserAdmin = false;
+  let currentUserMail = null;
+  
+  if (authHeader) {
+    try {
+      const token = authHeader.split(' ')[1];
+      const decoded = jwt.verify(token, SECRET);
+      currentUserMail = decoded.mail;
+      isUserAdmin = decoded.role === 'admin';
+    } catch (err) {
+      // Token nieprawidłowy, kontynuuj jako niezalogowany
+    }
+  }
+  
   db.all('SELECT * FROM spotet_comments WHERE spotetId = ? ORDER BY date DESC', [id], (err, rows) => {
     if (err) return res.status(500).json({ message: 'Błąd serwera przy pobieraniu komentarzy.' });
-    res.json(rows);
+    
+    // Filtruj dane w zależności od uprawnień użytkownika
+    const filteredRows = rows.map(row => ({
+      ...row,
+      // Admin widzi wszystkie emaile, zwykły user tylko swoje podpisane komentarze
+      displayAuthor: isUserAdmin ? (row.authorMail || 'Anonim') : 
+                    (row.isAnonymous ? 'Anonim' : 
+                     (row.authorMail === currentUserMail ? row.authorMail : 'Anonim')),
+      isCurrentUserAdmin: isUserAdmin,
+      currentUserMail: currentUserMail
+    }));
+    
+    res.json(filteredRows);
   });
 });
 
@@ -748,6 +841,108 @@ app.delete('/api/ogloszenia/comments/:id', (req, res) => {
     res.json({ message: 'Komentarz usunięty.' });
   });
 });
+
+// Usuń komentarz do wiadomości spotted (admin lub właściciel)
+app.delete('/api/spotet/comments/:id', (req, res) => {
+  const { id } = req.params;
+  
+  // Sprawdź uprawnienia - pobierz dane użytkownika z tokena
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ message: 'Brak autoryzacji.' });
+  }
+  
+  const token = authHeader.split(' ')[1];
+  let currentUser = null;
+  
+  try {
+    const decoded = jwt.verify(token, SECRET);
+    currentUser = decoded;
+  } catch (err) {
+    return res.status(401).json({ message: 'Nieprawidłowy token.' });
+  }
+  
+  // Sprawdź czy komentarz istnieje i kto go napisał
+  db.get('SELECT * FROM spotet_comments WHERE id = ?', [id], (err, comment) => {
+    if (err) return res.status(500).json({ message: 'Błąd serwera przy sprawdzaniu komentarza.' });
+    if (!comment) return res.status(404).json({ message: 'Nie znaleziono komentarza.' });
+    
+    // Tylko admin lub właściciel komentarza może go usunąć
+    if (currentUser.role !== 'admin' && currentUser.mail !== comment.authorMail) {
+      return res.status(403).json({ message: 'Brak uprawnień do usunięcia tego komentarza.' });
+    }
+    
+    // Usuń komentarz
+    db.run('DELETE FROM spotet_comments WHERE id = ?', [id], function(err) {
+      if (err) return res.status(500).json({ message: 'Błąd serwera przy usuwaniu komentarza.' });
+      res.json({ message: 'Komentarz usunięty.' });
+    });
+  });
+});
+
+// Funkcja do dodawania brakujących kolumn w istniejących tabelach
+function updateExistingTables() {
+  // Sprawdź czy tabela users istnieje przed próbą dodania kolumn
+  db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='users'", (err, row) => {
+    if (err) {
+      console.log('Błąd sprawdzania tabeli users:', err.message);
+      return;
+    }
+    
+    if (!row) {
+      console.log('Tabela users nie istnieje jeszcze - pomijam aktualizację kolumn');
+      return;
+    }
+
+    // Sprawdź jakie kolumny już istnieją
+    db.all("PRAGMA table_info(users)", (err, columns) => {
+      if (err) {
+        console.log('Błąd sprawdzania kolumn tabeli users:', err.message);
+        return;
+      }
+
+      const existingColumns = columns.map(col => col.name);
+      
+      // Dodaj kolumnę role jeśli nie istnieje
+      if (!existingColumns.includes('role')) {
+        db.run(`ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'`, (err) => {
+          if (err) {
+            console.log('Błąd dodawania kolumny role:', err.message);
+          } else {
+            console.log('✅ Dodano kolumnę role do tabeli users');
+          }
+        });
+      }
+      
+      // Dodaj kolumnę blockedUntil jeśli nie istnieje
+      if (!existingColumns.includes('blockedUntil')) {
+        db.run(`ALTER TABLE users ADD COLUMN blockedUntil TEXT`, (err) => {
+          if (err) {
+            console.log('Błąd dodawania kolumny blockedUntil:', err.message);
+          } else {
+            console.log('✅ Dodano kolumnę blockedUntil do tabeli users');
+          }
+        });
+      }
+      
+      // Dodaj kolumnę blockReason jeśli nie istnieje
+      if (!existingColumns.includes('blockReason')) {
+        db.run(`ALTER TABLE users ADD COLUMN blockReason TEXT`, (err) => {
+          if (err) {
+            console.log('Błąd dodawania kolumny blockReason:', err.message);
+          } else {
+            console.log('✅ Dodano kolumnę blockReason do tabeli users');
+          }
+        });
+      }
+    });
+  });
+}
+
+// Wywołaj aktualizację tabel dla istniejących baz danych po krótkim opóźnieniu
+setTimeout(() => {
+  updateExistingTables();
+}, 100);
 
 
 
