@@ -15,7 +15,7 @@ const bcrypt = require('bcryptjs');
 const sqlite3 = require('sqlite3').verbose();
 const nodemailer = require('nodemailer');
 const jwt = require('jsonwebtoken');
-const db = new sqlite3.Database('./users.db'); // <-- tylko raz!
+const db = new sqlite3.Database('data/users.db'); // <-- tylko raz!
 
 db.run(`CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
